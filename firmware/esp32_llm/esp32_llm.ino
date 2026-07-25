@@ -221,10 +221,11 @@ static void start_default_prompt() {
 
 static void print_serial_help() {
   Serial.println("\nserial commands:");
-  Serial.println("  <enter>          generate 32 more tokens");
+  Serial.println("  <enter>          generate 32 more tokens (auto-resets if context is full)");
   Serial.println("  more [N]         generate N more tokens");
   Serial.println("  reset            reset to default prompt");
   Serial.println("  prompt_ids a,b,c reset and use token-id prompt");
+  Serial.println("  status           show token/context position");
   Serial.println("  help             show this help");
 }
 
@@ -237,7 +238,17 @@ static void handle_serial_command(const char *line_in) {
   char *p = line;
   while (*p == ' ' || *p == '\t' || *p == '\r') p++;
 
+  // Trim trailing spaces.
+  size_t plen = strlen(p);
+  while (plen > 0 && (p[plen - 1] == ' ' || p[plen - 1] == '\t' || p[plen - 1] == '\r')) {
+    p[--plen] = '\0';
+  }
+
   if (*p == '\0') {
+    if (cur_pos >= model.c.seq_len) {
+      Serial.println("context full; restarting from default prompt");
+      start_default_prompt();
+    }
     generate_more(DEFAULT_MORE);
     return;
   }
@@ -253,9 +264,18 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
+  if (strcmp(p, "status") == 0) {
+    Serial.printf("status: pos %d/%d, generated %d tokens\n", cur_pos, model.c.seq_len, decoded_total);
+    return;
+  }
+
   if (strncmp(p, "more", 4) == 0) {
     int n = DEFAULT_MORE;
     if (p[4] != '\0') n = atoi(p + 4);
+    if (cur_pos >= model.c.seq_len) {
+      Serial.println("context full; restarting from default prompt");
+      start_default_prompt();
+    }
     generate_more(n);
     return;
   }
@@ -280,7 +300,11 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
-  Serial.println("unknown command. type 'help'");
+  if (strchr(p, ' ') || strchr(p, '"') || strchr(p, '\'')) {
+    Serial.println("plain text prompts are not supported on-device; use 'prompt_ids ...' or 'reset'.");
+  } else {
+    Serial.println("unknown command. type 'help'");
+  }
 }
 
 void setup() {
