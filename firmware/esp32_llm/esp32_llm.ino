@@ -25,6 +25,7 @@ static const int PROMPT_IDS[] = {433, 447, 259, 405}; // "Once upon a time"
 static const int N_GENERATE = 200;
 static const int DEFAULT_MORE = 32;
 static const int MAX_PROMPT_IDS = 64;
+static const int MAX_PROMPT_BANK = 8;
 
 // Emit one token to every active output (serial always; TFT when enabled).
 static void emit(int tok) {
@@ -46,6 +47,10 @@ static bool model_ready = false;
 static int cur_pos = 0;
 static int cur_tok = 0;
 static int decoded_total = 0;
+static int prompt_bank[MAX_PROMPT_BANK][MAX_PROMPT_IDS];
+static int prompt_bank_lens[MAX_PROMPT_BANK];
+static int prompt_bank_count = 0;
+static int prompt_bank_idx = 0;
 
 // ---- int8 output head (SIMD-friendly) --------------------------------------
 // The head is scanned in full every token and dominates runtime. We stage it as
@@ -191,6 +196,23 @@ static void clear_runtime_state() {
   decoded_total = 0;
 }
 
+static void set_prompt_slot(int slot, const int *ids, int n_ids) {
+  if (slot < 0 || slot >= MAX_PROMPT_BANK) return;
+  if (n_ids < 1) return;
+  if (n_ids > MAX_PROMPT_IDS) n_ids = MAX_PROMPT_IDS;
+  for (int i = 0; i < n_ids; i++) {
+    prompt_bank[slot][i] = ids[i];
+  }
+  prompt_bank_lens[slot] = n_ids;
+}
+
+static void init_prompt_bank() {
+  int n_default = sizeof(PROMPT_IDS) / sizeof(int);
+  set_prompt_slot(0, PROMPT_IDS, n_default);
+  prompt_bank_count = 1;
+  prompt_bank_idx = 0;
+}
+
 static void start_prompt_ids(const int *ids, int n_ids) {
   if (!model_ready) {
     Serial.println("model not ready");
@@ -215,8 +237,24 @@ static void start_prompt_ids(const int *ids, int n_ids) {
   }
 }
 
+static void start_active_prompt() {
+  if (prompt_bank_count <= 0) {
+    init_prompt_bank();
+  }
+  start_prompt_ids(prompt_bank[prompt_bank_idx], prompt_bank_lens[prompt_bank_idx]);
+}
+
+static void print_prompt_list() {
+  Serial.printf("prompt bank: %d/%d entries, active=%d\n",
+                prompt_bank_count, MAX_PROMPT_BANK, prompt_bank_idx);
+  for (int i = 0; i < prompt_bank_count; i++) {
+    Serial.printf("  [%d]%s len=%d\n", i, (i == prompt_bank_idx ? "*" : " "), prompt_bank_lens[i]);
+  }
+}
+
 static void start_default_prompt() {
-  start_prompt_ids(PROMPT_IDS, sizeof(PROMPT_IDS) / sizeof(int));
+  prompt_bank_idx = 0;
+  start_active_prompt();
 }
 
 static void print_serial_help() {
@@ -225,6 +263,9 @@ static void print_serial_help() {
   Serial.println("  more [N]         generate N more tokens");
   Serial.println("  reset            reset to default prompt");
   Serial.println("  prompt_ids a,b,c reset and use token-id prompt");
+  Serial.println("  prompt_add a,b,c save a prompt slot");
+  Serial.println("  next_prompt      rotate to next saved prompt and generate");
+  Serial.println("  prompt_list      show saved prompt slots");
   Serial.println("  status           show token/context position");
   Serial.println("  help             show this help");
 }
@@ -259,7 +300,7 @@ static void handle_serial_command(const char *line_in) {
   }
 
   if (strcmp(p, "reset") == 0) {
-    start_default_prompt();
+    start_active_prompt();
     generate_more(DEFAULT_MORE);
     return;
   }
@@ -295,8 +336,52 @@ static void handle_serial_command(const char *line_in) {
       ids[n_ids++] = atoi(tok);
       tok = strtok(NULL, ", ");
     }
+    set_prompt_slot(prompt_bank_idx, ids, n_ids);
     start_prompt_ids(ids, n_ids);
     generate_more(DEFAULT_MORE);
+    return;
+  }
+
+  if (strncmp(p, "prompt_add", 10) == 0) {
+    char *args = p + 10;
+    while (*args == ' ' || *args == '\t') args++;
+    if (*args == '\0') {
+      Serial.println("usage: prompt_add 433,447,259,405");
+      return;
+    }
+    if (prompt_bank_count >= MAX_PROMPT_BANK) {
+      Serial.printf("prompt bank full (%d). overwrite with prompt_ids or reboot.\n", MAX_PROMPT_BANK);
+      return;
+    }
+    int ids[MAX_PROMPT_IDS];
+    int n_ids = 0;
+    char *tok = strtok(args, ", ");
+    while (tok && n_ids < MAX_PROMPT_IDS) {
+      ids[n_ids++] = atoi(tok);
+      tok = strtok(NULL, ", ");
+    }
+    set_prompt_slot(prompt_bank_count, ids, n_ids);
+    prompt_bank_idx = prompt_bank_count;
+    prompt_bank_count++;
+    Serial.printf("saved prompt slot %d\n", prompt_bank_idx);
+    start_active_prompt();
+    generate_more(DEFAULT_MORE);
+    return;
+  }
+
+  if (strcmp(p, "next_prompt") == 0) {
+    if (prompt_bank_count <= 0) {
+      init_prompt_bank();
+    }
+    prompt_bank_idx = (prompt_bank_idx + 1) % prompt_bank_count;
+    Serial.printf("switched to prompt slot %d\n", prompt_bank_idx);
+    start_active_prompt();
+    generate_more(DEFAULT_MORE);
+    return;
+  }
+
+  if (strcmp(p, "prompt_list") == 0) {
+    print_prompt_list();
     return;
   }
 
@@ -363,6 +448,7 @@ void setup() {
                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
 
   model_ready = true;
+  init_prompt_bank();
   llm_profile_reset(&s);
   start_default_prompt();
   generate_more(N_GENERATE);
