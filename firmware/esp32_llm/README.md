@@ -56,6 +56,36 @@ arduino-cli monitor -p /dev/ttyUSB0 --config baudrate=115200
 The model payload only needs reflashing after a new export. Firmware-only
 changes can be uploaded without rewriting the model partition.
 
+## Current Working Story Mode (2026-07)
+
+The current working firmware stage runs in autonomous storytelling mode:
+
+1. No serial command UI is required.
+2. Story text streams continuously on serial output.
+3. Context rollover is automatic (keeps generating after internal reset).
+4. Startup seed is randomized from a small prompt bank for more variety.
+5. Throughput/telemetry lines are suppressed so serial output is story text only.
+
+Typical run command:
+
+```bash
+uv run python flash.py --skip-model
+stty -F /dev/ttyACM0 115200 raw -echo
+cat /dev/ttyACM0
+```
+
+Example serial output snippet:
+
+```text
+the cat and wanted to go outside.
+"Look, I found something big!" the little cat hopped towards it and found some flowers.
+Then, a mean dog came running down the stairs to the park.
+The dog jumped on a leaf and chased it with its nose.
+```
+
+Note: if you use `timeout ... cat`, exit code `124` is expected when timeout
+expires; it does not indicate a firmware failure.
+
 The model used for the measurements below has SHA-256:
 
 ```text

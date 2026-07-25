@@ -7,6 +7,7 @@
 #include "esp_partition.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #define LLM_PROFILE 1
@@ -26,6 +27,19 @@ static const int N_GENERATE = 200;
 static const int DEFAULT_MORE = 32;
 static const int MAX_PROMPT_IDS = 64;
 static const int MAX_PROMPT_BANK = 8;
+static const int SAMPLE_TOP_K = 32;
+static const float SAMPLE_TEMP = 0.95f;
+static const float REPEAT_PENALTY = 0.28f;
+static const int RECENT_WINDOW = 96;
+
+static const int PROMPT_IDS_0[] = {433, 447, 259, 405};
+static const int PROMPT_IDS_1[] = {2322, 259, 1759, 1814};
+static const int PROMPT_IDS_2[] = {10938, 557, 317, 263, 1078};
+static const int PROMPT_IDS_3[] = {345, 259, 1122, 1529};
+static const int PROMPT_IDS_4[] = {2614, 282, 259, 918, 1148};
+static const int PROMPT_IDS_5[] = {1570, 263, 3051, 348, 263, 1944};
+static const int PROMPT_IDS_6[] = {44, 537, 5725, 12, 317, 259, 2397};
+static const int PROMPT_IDS_7[] = {427, 7361, 3699};
 
 // Emit one token to every active output (serial always; TFT when enabled).
 static void emit(int tok) {
@@ -51,6 +65,14 @@ static int prompt_bank[MAX_PROMPT_BANK][MAX_PROMPT_IDS];
 static int prompt_bank_lens[MAX_PROMPT_BANK];
 static int prompt_bank_count = 0;
 static int prompt_bank_idx = 0;
+static uint32_t prng_state = 1;
+static int64_t window_start_us = 0;
+static int64_t window_decode_us = 0;
+static int window_tokens = 0;
+static int recent_ids[RECENT_WINDOW];
+static int recent_len = 0;
+static int recent_head = 0;
+static uint8_t recent_counts[VOCAB_N];
 
 // ---- int8 output head (SIMD-friendly) --------------------------------------
 // The head is scanned in full every token and dominates runtime. We stage it as
@@ -135,6 +157,126 @@ static void blink(uint8_t g) {
 #endif
 }
 
+static uint32_t prng_next() {
+  prng_state = prng_state * 1664525u + 1013904223u;
+  return prng_state;
+}
+
+static float prng_unit() {
+  // 24-bit mantissa-style fraction in [0,1).
+  return (float)((prng_next() >> 8) & 0x00FFFFFFu) / 16777216.0f;
+}
+
+static void recent_clear() {
+  memset(recent_counts, 0, sizeof(recent_counts));
+  recent_len = 0;
+  recent_head = 0;
+}
+
+static void recent_note(int tok) {
+  if (tok < 0 || tok >= VOCAB_N) return;
+
+  if (recent_len == RECENT_WINDOW) {
+    int old = recent_ids[recent_head];
+    if (old >= 0 && old < VOCAB_N && recent_counts[old] > 0) recent_counts[old]--;
+    recent_ids[recent_head] = tok;
+    recent_head = (recent_head + 1) % RECENT_WINDOW;
+  } else {
+    int idx = (recent_head + recent_len) % RECENT_WINDOW;
+    recent_ids[idx] = tok;
+    recent_len++;
+  }
+
+  if (recent_counts[tok] < 255) recent_counts[tok]++;
+}
+
+static int sample_topk_token(const float *logits, int vocab, int k) {
+  if (k < 1) k = 1;
+  if (k > 16) k = 16;
+
+  int top_ids[16] = {0};
+  float top_vals[16];
+  for (int i = 0; i < 16; i++) top_vals[i] = -1e30f;
+
+  int n = 0;
+  for (int v = 0; v < vocab; v++) {
+    float val = logits[v];
+    if (val <= top_vals[k - 1]) continue;
+
+    int pos = k - 1;
+    while (pos > 0 && val > top_vals[pos - 1]) {
+      top_vals[pos] = top_vals[pos - 1];
+      top_ids[pos] = top_ids[pos - 1];
+      pos--;
+    }
+    top_vals[pos] = val;
+    top_ids[pos] = v;
+    if (n < k) n++;
+  }
+
+  if (n <= 0) return 0;
+  return top_ids[prng_next() % (uint32_t)n];
+}
+
+static int sample_next_token(const float *logits, int vocab, int k, float temp) {
+  if (k < 1) k = 1;
+  if (k > 64) k = 64;
+  if (temp < 0.1f) temp = 0.1f;
+
+  int top_ids[64] = {0};
+  float top_vals[64];
+  for (int i = 0; i < 64; i++) top_vals[i] = -1e30f;
+
+  int n = 0;
+  for (int v = 0; v < vocab; v++) {
+    float val = logits[v] - REPEAT_PENALTY * (float)recent_counts[v];
+    if (val <= top_vals[k - 1]) continue;
+
+    int pos = k - 1;
+    while (pos > 0 && val > top_vals[pos - 1]) {
+      top_vals[pos] = top_vals[pos - 1];
+      top_ids[pos] = top_ids[pos - 1];
+      pos--;
+    }
+    top_vals[pos] = val;
+    top_ids[pos] = v;
+    if (n < k) n++;
+  }
+
+  if (n <= 0) return 0;
+  if (n == 1) return top_ids[0];
+
+  float maxv = top_vals[0];
+  float probs[64];
+  float s = 0.0f;
+  for (int i = 0; i < n; i++) {
+    float z = (top_vals[i] - maxv) / temp;
+    float p = expf(z);
+    probs[i] = p;
+    s += p;
+  }
+
+  float r = prng_unit() * s;
+  float c = 0.0f;
+  for (int i = 0; i < n; i++) {
+    c += probs[i];
+    if (r <= c) return top_ids[i];
+  }
+  return top_ids[n - 1];
+}
+
+static int next_token_greedy() {
+  int best = 0;
+  float bv = -1e30f;
+  for (int v = 0; v < VOCAB_N; v++) {
+    if (s.logits[v] > bv) {
+      bv = s.logits[v];
+      best = v;
+    }
+  }
+  return best;
+}
+
 // Greedy decode for n tokens, continuing from current context.
 static void generate_more(int n) {
   if (!model_ready) {
@@ -186,6 +328,7 @@ static void generate_more(int n) {
 }
 
 static void clear_runtime_state() {
+  recent_clear();
   memset(s.kcache, 0, (size_t)model.c.n_layers * model.c.seq_len * model.c.dim * sizeof(float));
   memset(s.vcache, 0, (size_t)model.c.n_layers * model.c.seq_len * model.c.dim * sizeof(float));
   memset(s.ple, 0, (size_t)model.c.n_layers * model.c.ple_dim * sizeof(float));
@@ -194,6 +337,15 @@ static void clear_runtime_state() {
   cur_pos = 0;
   cur_tok = 0;
   decoded_total = 0;
+}
+
+static void clear_cache_state() {
+  memset(s.kcache, 0, (size_t)model.c.n_layers * model.c.seq_len * model.c.dim * sizeof(float));
+  memset(s.vcache, 0, (size_t)model.c.n_layers * model.c.seq_len * model.c.dim * sizeof(float));
+  memset(s.ple, 0, (size_t)model.c.n_layers * model.c.ple_dim * sizeof(float));
+  memset(s.tmpP, 0, (size_t)model.c.n_layers * model.c.ple_dim * sizeof(float));
+  memset(s.trow, 0, (size_t)model.c.n_layers * model.c.ple_dim * sizeof(float));
+  cur_pos = 0;
 }
 
 static void set_prompt_slot(int slot, const int *ids, int n_ids) {
@@ -207,9 +359,15 @@ static void set_prompt_slot(int slot, const int *ids, int n_ids) {
 }
 
 static void init_prompt_bank() {
-  int n_default = sizeof(PROMPT_IDS) / sizeof(int);
-  set_prompt_slot(0, PROMPT_IDS, n_default);
-  prompt_bank_count = 1;
+  set_prompt_slot(0, PROMPT_IDS_0, sizeof(PROMPT_IDS_0) / sizeof(int));
+  set_prompt_slot(1, PROMPT_IDS_1, sizeof(PROMPT_IDS_1) / sizeof(int));
+  set_prompt_slot(2, PROMPT_IDS_2, sizeof(PROMPT_IDS_2) / sizeof(int));
+  set_prompt_slot(3, PROMPT_IDS_3, sizeof(PROMPT_IDS_3) / sizeof(int));
+  set_prompt_slot(4, PROMPT_IDS_4, sizeof(PROMPT_IDS_4) / sizeof(int));
+  set_prompt_slot(5, PROMPT_IDS_5, sizeof(PROMPT_IDS_5) / sizeof(int));
+  set_prompt_slot(6, PROMPT_IDS_6, sizeof(PROMPT_IDS_6) / sizeof(int));
+  set_prompt_slot(7, PROMPT_IDS_7, sizeof(PROMPT_IDS_7) / sizeof(int));
+  prompt_bank_count = 8;
   prompt_bank_idx = 0;
 }
 
@@ -234,6 +392,7 @@ static void start_prompt_ids(const int *ids, int n_ids) {
     cur_tok = id;
     emit(cur_tok);
     llm_forward(&model, cur_tok, cur_pos++, &s);
+    recent_note(cur_tok);
   }
 }
 
@@ -257,6 +416,21 @@ static void start_default_prompt() {
   start_active_prompt();
 }
 
+static void prime_story_seed() {
+  if (prompt_bank_count > 0) {
+    prompt_bank_idx = (int)(prng_next() % (uint32_t)prompt_bank_count);
+  }
+  start_active_prompt();
+  int extra = 1 + (int)(prng_next() % 4u);
+  for (int i = 0; i < extra && cur_pos < model.c.seq_len; i++) {
+    int tok = sample_next_token(s.logits, VOCAB_N, 24, 1.05f);
+    cur_tok = tok;
+    emit(cur_tok);
+    llm_forward(&model, cur_tok, cur_pos++, &s);
+    recent_note(cur_tok);
+  }
+}
+
 static void print_serial_help() {
   Serial.println("\nserial commands:");
   Serial.println("  <enter>          generate 32 more tokens (auto-resets if context is full)");
@@ -268,6 +442,32 @@ static void print_serial_help() {
   Serial.println("  prompt_list      show saved prompt slots");
   Serial.println("  status           show token/context position");
   Serial.println("  help             show this help");
+}
+
+static void print_cli_prompt() {
+  Serial.print("cmd> ");
+}
+
+static char ascii_lower(char c) {
+  if (c >= 'A' && c <= 'Z') return (char)(c - 'A' + 'a');
+  return c;
+}
+
+static bool equals_ci(const char *a, const char *b) {
+  while (*a && *b) {
+    if (ascii_lower(*a) != ascii_lower(*b)) return false;
+    a++; b++;
+  }
+  return *a == '\0' && *b == '\0';
+}
+
+static bool starts_with_ci(const char *s, const char *prefix) {
+  while (*prefix) {
+    if (*s == '\0') return false;
+    if (ascii_lower(*s) != ascii_lower(*prefix)) return false;
+    s++; prefix++;
+  }
+  return true;
 }
 
 static void handle_serial_command(const char *line_in) {
@@ -294,23 +494,23 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
-  if (strcmp(p, "help") == 0) {
+  if (equals_ci(p, "help")) {
     print_serial_help();
     return;
   }
 
-  if (strcmp(p, "reset") == 0) {
+  if (equals_ci(p, "reset")) {
     start_active_prompt();
     generate_more(DEFAULT_MORE);
     return;
   }
 
-  if (strcmp(p, "status") == 0) {
+  if (equals_ci(p, "status")) {
     Serial.printf("status: pos %d/%d, generated %d tokens\n", cur_pos, model.c.seq_len, decoded_total);
     return;
   }
 
-  if (strncmp(p, "more", 4) == 0) {
+  if (starts_with_ci(p, "more")) {
     int n = DEFAULT_MORE;
     if (p[4] != '\0') n = atoi(p + 4);
     if (cur_pos >= model.c.seq_len) {
@@ -321,7 +521,7 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
-  if (strncmp(p, "prompt_ids", 10) == 0) {
+  if (starts_with_ci(p, "prompt_ids")) {
     char *args = p + 10;
     while (*args == ' ' || *args == '\t') args++;
     if (*args == '\0') {
@@ -342,7 +542,7 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
-  if (strncmp(p, "prompt_add", 10) == 0) {
+  if (starts_with_ci(p, "prompt_add")) {
     char *args = p + 10;
     while (*args == ' ' || *args == '\t') args++;
     if (*args == '\0') {
@@ -369,7 +569,7 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
-  if (strcmp(p, "next_prompt") == 0) {
+  if (equals_ci(p, "next_prompt")) {
     if (prompt_bank_count <= 0) {
       init_prompt_bank();
     }
@@ -380,7 +580,7 @@ static void handle_serial_command(const char *line_in) {
     return;
   }
 
-  if (strcmp(p, "prompt_list") == 0) {
+  if (equals_ci(p, "prompt_list")) {
     print_prompt_list();
     return;
   }
@@ -449,9 +649,13 @@ void setup() {
 
   model_ready = true;
   init_prompt_bank();
+  prng_state = esp_random();
   llm_profile_reset(&s);
-  start_default_prompt();
-  generate_more(N_GENERATE);
+  prime_story_seed();
+
+  window_start_us = esp_timer_get_time();
+  window_decode_us = 0;
+  window_tokens = 0;
 
   if (s.profile.calls) {
     float n = (float)s.profile.calls * 1000.f;
@@ -460,7 +664,6 @@ void setup() {
                   s.profile.ffn_us / n, s.profile.ple_us / n,
                   s.profile.head_us / n);
   }
-  print_serial_help();
 #if USE_DISPLAY
   // Closing card: compute-only tok/s (the model's own speed) + ms/token.
   if (decoded_total > 0) {
@@ -471,13 +674,41 @@ void setup() {
 }
 
 void loop() {
-  if (!Serial.available()) {
-    delay(25);
+  if (!model_ready) {
+    delay(50);
     return;
   }
 
-  char line[192];
-  size_t n = Serial.readBytesUntil('\n', line, sizeof(line) - 1);
-  line[n] = '\0';
-  handle_serial_command(line);
+  if (cur_pos >= model.c.seq_len) {
+    clear_cache_state();
+    llm_forward(&model, cur_tok, cur_pos++, &s);
+    recent_note(cur_tok);
+  }
+
+  cur_tok = sample_next_token(s.logits, VOCAB_N, SAMPLE_TOP_K, SAMPLE_TEMP);
+  // Prevent pathological immediate repeats such as "slide slide slide".
+  if (cur_pos > 0 && recent_len > 0) {
+    int last_idx = (recent_head + recent_len - 1) % RECENT_WINDOW;
+    int last_tok = recent_ids[last_idx];
+    if (cur_tok == last_tok) {
+      cur_tok = sample_next_token(s.logits, VOCAB_N, SAMPLE_TOP_K, SAMPLE_TEMP + 0.1f);
+    }
+  }
+  emit(cur_tok);
+  blink((decoded_total & 1) ? 40 : 8);
+
+  int64_t d0 = esp_timer_get_time();
+  llm_forward(&model, cur_tok, cur_pos++, &s);
+  recent_note(cur_tok);
+  window_decode_us += esp_timer_get_time() - d0;
+  decoded_total++;
+  window_tokens++;
+
+  if (window_tokens >= 32) {
+    window_start_us = esp_timer_get_time();
+    window_decode_us = 0;
+    window_tokens = 0;
+  }
+
+  if ((decoded_total & 7) == 0) delay(0);
 }
