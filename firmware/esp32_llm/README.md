@@ -6,7 +6,13 @@ embedding/output head is staged in PSRAM at boot.
 
 ## Build and verify
 
-Export the group-128 ragged-int4 model and verify the portable C runtime first:
+If you want the full sequence (prepare/train/export/compile/flash) in one
+command, run `uv run python flash.py --full-pipeline --force-train` from the
+repo root.
+
+Export the group-128 ragged-int4 model and verify the portable C runtime first.
+This repo does not ship `runs/*.pt` checkpoints or the generated `firmware/model/model.bin`, so
+you need a trained checkpoint in `runs/` before `src/export.py` can produce the artifact:
 
 ```bash
 cd src
@@ -28,19 +34,23 @@ arduino-cli compile \
 
 ## Flash and run
 
-Replace the port if the board enumerates under a different device name:
+On Linux the board usually shows up as `/dev/ttyUSB0`; replace the port if your
+system uses a different device name:
+
+If you already have a checkpoint/model and just want compile+flash with USB
+auto-scan, run `uv run python flash.py` from the repo root.
 
 ```bash
 arduino-cli upload \
-  -p /dev/cu.usbmodem2101 \
+  -p /dev/ttyUSB0 \
   --fqbn 'esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=custom,PSRAM=opi,DebugLevel=info' \
   --input-dir /tmp/esp32-llm-build \
   firmware/esp32_llm
 
-esptool.py --chip esp32s3 --port /dev/cu.usbmodem2101 --baud 921600 \
+esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 \
   write_flash 0x110000 firmware/model/model.bin
 
-arduino-cli monitor -p /dev/cu.usbmodem2101 --config baudrate=115200
+arduino-cli monitor -p /dev/ttyUSB0 --config baudrate=115200
 ```
 
 The model payload only needs reflashing after a new export. Firmware-only

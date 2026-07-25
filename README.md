@@ -16,6 +16,57 @@ thousand parameters, so this one holds about a hundred times more. It fits becau
 most of the model lives in flash instead of RAM, using an idea from Google's Gemma
 models called Per-Layer Embeddings.
 
+## Reproducing It
+
+This repo is source-first: the generated training data, checkpoints, export
+artifacts, and firmware assets are not committed. To reproduce the ESP32 story
+demo from a fresh checkout, you need:
+
+1. Python 3.12+
+2. `uv`
+3. A TinyStories download and BPE/data bins from `data/prepare.py`
+4. A trained checkpoint in `runs/`
+5. Arduino CLI plus an ESP32 Arduino core for the firmware build
+
+The easiest path is the bundled wrapper:
+
+```bash
+uv run python deploy.py
+```
+
+That command does the full sequence in order: prepare the data, train the deploy
+checkpoint, export `firmware/model/model.bin`, generate `firmware/esp32_llm/vocab.h`,
+and verify the exported binary on the host.
+
+If you already have the data and checkpoint, you can skip ahead with:
+
+```bash
+uv run python deploy.py --skip-data --skip-train
+```
+
+For a start-to-finish run that prepares data, trains, exports, compiles, and
+flashes in one command, use:
+
+```bash
+uv run python flash.py --full-pipeline --force-train
+```
+
+If you want to reuse an existing checkpoint (skip retraining), run:
+
+```bash
+uv run python flash.py --full-pipeline
+```
+
+If the model/checkpoint already exists and you only want build+flash, use:
+
+```bash
+uv run python flash.py
+```
+
+The device sketch plays the same “Once upon a time” prompt that the firmware
+README documents, so the on-chip demo is a small storyteller rather than a chat
+assistant.
+
 ## The numbers
 
 |              |                                                               |
