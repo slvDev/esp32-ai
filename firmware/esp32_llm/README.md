@@ -6,7 +6,13 @@ embedding/output head is staged in PSRAM at boot.
 
 ## Build and verify
 
-Export the group-128 ragged-int4 model and verify the portable C runtime first:
+If you want the full sequence (prepare/train/export/compile/flash) in one
+command, run `uv run python flash.py --full-pipeline --force-train` from the
+repo root.
+
+Export the group-128 ragged-int4 model and verify the portable C runtime first.
+This repo does not ship `runs/*.pt` checkpoints or the generated `firmware/model/model.bin`, so
+you need a trained checkpoint in `runs/` before `src/export.py` can produce the artifact:
 
 ```bash
 cd src
@@ -28,23 +34,57 @@ arduino-cli compile \
 
 ## Flash and run
 
-Replace the port if the board enumerates under a different device name:
+On Linux the board usually shows up as `/dev/ttyUSB0`; replace the port if your
+system uses a different device name:
+
+If you already have a checkpoint/model and just want compile+flash with USB
+auto-scan, run `uv run python flash.py` from the repo root.
 
 ```bash
 arduino-cli upload \
-  -p /dev/cu.usbmodem2101 \
+  -p /dev/ttyUSB0 \
   --fqbn 'esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=custom,PSRAM=opi,DebugLevel=info' \
   --input-dir /tmp/esp32-llm-build \
   firmware/esp32_llm
 
-esptool.py --chip esp32s3 --port /dev/cu.usbmodem2101 --baud 921600 \
+esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 921600 \
   write_flash 0x110000 firmware/model/model.bin
 
-arduino-cli monitor -p /dev/cu.usbmodem2101 --config baudrate=115200
+arduino-cli monitor -p /dev/ttyUSB0 --config baudrate=115200
 ```
 
 The model payload only needs reflashing after a new export. Firmware-only
 changes can be uploaded without rewriting the model partition.
+
+## Current Working Story Mode (2026-07)
+
+The current working firmware stage runs in autonomous storytelling mode:
+
+1. No serial command UI is required.
+2. Story text streams continuously on serial output.
+3. Context rollover is automatic (keeps generating after internal reset).
+4. Startup seed is randomized from a small prompt bank for more variety.
+5. Throughput/telemetry lines are suppressed so serial output is story text only.
+
+Typical run command:
+
+```bash
+uv run python flash.py --skip-model
+stty -F /dev/ttyACM0 115200 raw -echo
+cat /dev/ttyACM0
+```
+
+Example serial output snippet:
+
+```text
+the cat and wanted to go outside.
+"Look, I found something big!" the little cat hopped towards it and found some flowers.
+Then, a mean dog came running down the stairs to the park.
+The dog jumped on a leaf and chased it with its nose.
+```
+
+Note: if you use `timeout ... cat`, exit code `124` is expected when timeout
+expires; it does not indicate a firmware failure.
 
 The model used for the measurements below has SHA-256:
 
