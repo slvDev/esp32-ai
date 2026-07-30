@@ -86,3 +86,11 @@ I left the messy history in the repo on purpose. That includes a bug I found in 
 own parameter accounting, which had inflated an early number, and the corrected
 result that followed once I fixed it. The commit history and `RESULTS.md` show where
 the numbers moved and why.
+
+### Quick sanity check
+Before a full training run, you can confirm your environment is set up correctly with a fast smoke test:
+\`\`\`
+uv run python data/prepare.py
+uv run python src/train.py --arm ple --steps 20 --batch-size 4 --seq-len 64 --eval-every 10 --tag smoke-test
+\`\`\`
+This runs in under a minute and confirms data prep, model build, and the training loop all work end to end.
