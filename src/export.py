@@ -20,7 +20,7 @@ import sys
 
 import numpy as np
 import torch
-
+import argparse
 from model import Config, TinyLM
 from quantize import quantize_groupwise
 
@@ -71,7 +71,11 @@ def quant_pack(w, group=GROUP):
 
 
 def main():
-    tag = sys.argv[1] if len(sys.argv) > 1 else "ple-cleandeploy-s0"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tag", default="ple-cleandeploy-s0",
+                    help="run tag to export, matches runs/{tag}.pt")
+    args = ap.parse_args()
+    tag = args.tag
     os.makedirs(OUT, exist_ok=True)
     ck = torch.load(os.path.join(RUNS, f"{tag}.pt"), map_location="cpu", weights_only=False)
     cfg = Config(**ck["cfg"])
