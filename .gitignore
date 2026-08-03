@@ -1,23 +1,32 @@
-# python
+# ---- Python ---------------------------------------------------------------
 __pycache__/
 .venv/
 *.pyc
 
-# data + tokenizers (regenerate with data/prepare.py)
+# ---- Dataset + tokenizer (downloaded / trained by data/prepare.py) --------
+# The TinyStories slice is ~300MB and the BPE tokenizer + uint16 token bins are
+# regenerable, so none of these are committed. Reproduce with:
+#   uv run python data/prepare.py
 data/*.bin
 data/*.txt
 data/*.json
 
-# training outputs
+# ---- Training checkpoints (created by src/train.py) ------------------------
+# Large and machine-specific; reproduce with src/train.py.
 runs/
 
-# generated firmware artifacts (regenerate with src/export.py, src/gen_assets.py)
+# ---- Generated firmware artifacts ------------------------------------------
+# model.bin and golden.* are produced by src/export.py from a checkpoint in
+# runs/. They are excluded to keep the repo small; the trained weights are also
+# published separately so nobody has to train to reproduce the demo -- see
+# tools/fetch_model.py and firmware/esp32_llm/README.md. vocab.h is produced by
+# src/gen_assets.py from the tokenizer JSON above.
 firmware/model/model.bin
 firmware/model/golden.npz
 firmware/model/golden.txt
 firmware/esp32_llm/vocab.h
 
-# raw video / recordings (demo footage — keep out of the repo)
+# ---- Raw video / recordings (demo footage -- keep out of the repo) ---------
 video/
 videos/
 *.mp4

@@ -6,6 +6,17 @@ embedding/output head is staged in PSRAM at boot.
 
 ## Build and verify
 
+Get the trained `model.bin` first. It is not committed (see `.gitignore`) -- once
+the weights are released it can be fetched with `tools/fetch_model.py`, which
+verifies the SHA-256 below:
+
+```bash
+python tools/fetch_model.py        # after the model is published (issue #7)
+python tools/fetch_model.py --check-only
+```
+
+Alternatively, export it yourself from a trained checkpoint with `src/export.py`.
+
 Export the group-128 ragged-int4 model and verify the portable C runtime first:
 
 ```bash
