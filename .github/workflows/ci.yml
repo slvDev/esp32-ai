@@ -1,0 +1,79 @@
+name: CI
+
+# End-to-end reproducibility on free runners: lint, then prove the whole
+# prepare -> train -> export -> C-verify -> perplexity pipeline works from a
+# clean checkout, and that the ESP32 sketch still compiles. No board needed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Syntax check all Python
+        run: uv run python -m compileall -q src data experiments
+      # Informational only: the repo has no ruff config yet, so findings are
+      # reported without blocking the pipeline.
+      - name: Ruff check (non-blocking)
+        continue-on-error: true
+        run: uvx ruff check src data experiments
+
+  host-pipeline:
+    name: Reproduce train -> export -> verify on host
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install deps
+        run: uv sync --frozen
+      - name: Prepare a small TinyStories slice (16MB)
+        run: uv run python data/prepare.py --vocab 32768 --max-bytes 16777216
+      - name: Train a tiny ple checkpoint (smoke, CPU only)
+        run: |
+          uv run python src/train.py --arm ple --vocab 32768 --target-core 590000 \
+            --batch-size 16 --seq-len 256 --steps 100 --tag ci
+      - name: Export model.bin + golden logits
+        run: uv run python src/export.py ple-ci-s0
+      - name: Build host verifier
+        run: cc -O3 -o /tmp/esp32-llm-verify firmware/host_verify/verify.c -lm
+      - name: Verify C matches the PyTorch golden
+        run: |
+          out=$(/tmp/esp32-llm-verify firmware/model/model.bin firmware/model/golden.txt)
+          echo "$out"
+          echo "$out" | grep -q "PASS" || { echo "::error::C port diverged from golden"; exit 1; }
+      - name: Build + run host perplexity harness
+        run: |
+          cc -O3 -o /tmp/esp32-llm-ppl firmware/host_verify/ppl.c -lm
+          /tmp/esp32-llm-ppl firmware/model/model.bin data/val_v32768.bin 8
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-model
+          path: firmware/model/
+
+  firmware-compile:
+    name: Compile ESP32 sketch (no board needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Prepare a small tokenizer (vocab 4096)
+        run: uv run python data/prepare.py --vocab 4096 --max-bytes 8388608
+      - name: Generate vocab.h for the sketch
+        run: uv run python src/gen_assets.py --tok data/bpe4096.json
+      - name: Install ESP32 core (pinned, matching README)
+        run: arduino-cli core update-index && arduino-cli core install esp32:esp32@3.3.10
+      - name: Install display libraries
+        run: arduino-cli lib install "Adafruit GFX Library" "Adafruit BusIO" "Adafruit SH110X"
+      - name: Compile sketch
+        run: |
+          arduino-cli compile \
+            --fqbn 'esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=custom,PSRAM=opi,DebugLevel=info' \
+            --build-property compiler.optimization_flags=-O3 \
+            firmware/esp32_llm

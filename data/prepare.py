@@ -63,11 +63,16 @@ def train_tokenizer(text):
 
 
 def main():
-    global VOCAB_SIZE
+    global VOCAB_SIZE, SLICE_BYTES
     ap = argparse.ArgumentParser()
     ap.add_argument("--vocab", type=int, default=4096)
+    ap.add_argument("--max-bytes", type=int, default=SLICE_BYTES,
+                    help="bytes of TinyStories to download/train on (default "
+                         f"{SLICE_BYTES / 1e6:.0f}MB; pass a smaller value for a "
+                         "quick smoke test or CI)")
     args = ap.parse_args()
     VOCAB_SIZE = args.vocab
+    SLICE_BYTES = args.max_bytes
     # vocab 4096 keeps the original train.bin/val.bin; others get suffixed names
     # so both datasets coexist and train.py can pick by --vocab.
     suffix = "" if VOCAB_SIZE == 4096 else f"_v{VOCAB_SIZE}"
