@@ -1,0 +1,4 @@
+# Stream model weights through the widest supported PSRAM and cache configuration.
+CONFIG_SPIRAM_SPEED_250M=y
+CONFIG_CACHE_L2_CACHE_512KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y

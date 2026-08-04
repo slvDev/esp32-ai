@@ -1,0 +1,10 @@
+version: 0.1.0
+targets:
+  - esp32p4
+  - esp32s3
+  - esp32s31
+dependencies:
+  idf: ">=5.5.0"
+  espressif/esp_board_manager:
+    version: "^0.6"
+    require: public

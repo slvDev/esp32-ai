@@ -1,0 +1,5 @@
+# A 0x10000 table offset accommodates the largest supported bootloader.
+# Name,    Type, SubType, Offset,    Size,      Flags
+nvs,       data, nvs,     0x11000,   0x6000,
+factory,   app,  factory, 0x20000,   0x190000,
+model,     data, 0x40,    0x1B0000,  0xE50000,
