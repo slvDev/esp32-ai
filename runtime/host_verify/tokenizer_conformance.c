@@ -9,8 +9,8 @@
 // One line per argument: either the ids separated by spaces, an empty line if
 // the input encodes to nothing, or ERROR:<code> for a BTK_ERR_* rejection.
 //
-//   cc -O2 -std=c11 -Wall -Wextra -Werror \
-//      -o /tmp/tokconf runtime/host_verify/tokenizer_conformance.c
+//   cc -O2 -std=c11 -Wall -Wextra -Werror -o /tmp/tokconf
+//      runtime/host_verify/tokenizer_conformance.c
 //   /tmp/tokconf tokenizer.btk "hello world" "i'm fine"
 
 #include <stdio.h>
