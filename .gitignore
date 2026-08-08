@@ -19,6 +19,22 @@ runs/
 # headers each sketch generates from those artifacts
 firmware/**/generated/
 
+# ESP-IDF generated dependency/build output
+firmware/**/build*/
+firmware/**/managed_components/
+firmware/**/dependencies.lock
+firmware/**/.cache/
+firmware/**/sdkconfig
+firmware/**/sdkconfig.old
+firmware/**/*.zip
+firmware/**/results/
+firmware/**/assets/result_*.jpg
+
+# local research caches; keep scripts and small result JSONs reviewable
+research/**/models/
+research/**/data/*.npy
+research/**/data/*.f32
+
 # raw video / recordings (demo footage - keep out of the repo)
 video/
 videos/
@@ -26,3 +42,11 @@ videos/
 *.mov
 *.MOV
 *.MP4
+
+# host_verify build output (regenerate: see runtime/host_verify/)
+*.obj
+*.exe
+val_tokens.bin
+
+# -fstack-usage reports, regenerated every build
+*.su

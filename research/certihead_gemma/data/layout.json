@@ -1,0 +1,226 @@
+[
+  {
+    "head": "TinyStories",
+    "layout": "tokid",
+    "dead_tiles": 0.40909093618392944,
+    "rho": 0.5095760822296143,
+    "prune": 21.5834841132164
+  },
+  {
+    "head": "TinyStories",
+    "layout": "norm",
+    "dead_tiles": 0.5202020108699799,
+    "rho": 1.6102887392044067,
+    "prune": 62.212324142456055
+  },
+  {
+    "head": "TinyStories",
+    "layout": "freq",
+    "dead_tiles": 0.4141414165496826,
+    "rho": 0.4751279056072235,
+    "prune": 19.258269667625427
+  },
+  {
+    "head": "TinyStories",
+    "layout": "random",
+    "dead_tiles": 0.0,
+    "rho": 0.17053157091140747,
+    "prune": 0.0
+  },
+  {
+    "head": "TinyStories",
+    "layout": "maxscore",
+    "dead_tiles": 0.15151512622833252,
+    "rho": 0.22259220480918884,
+    "prune": 11.616162210702896
+  },
+  {
+    "head": "TinyStories",
+    "layout": "everk",
+    "dead_tiles": 0.8888888880610466,
+    "rho": 0.5144476890563965,
+    "prune": 21.897901594638824
+  },
+  {
+    "head": "TinyStories",
+    "layout": "coact",
+    "dead_tiles": 0.7373737394809723,
+    "rho": 0.5101309418678284,
+    "prune": 21.959300339221954
+  },
+  {
+    "head": "TinyStories",
+    "layout": "coact+norm",
+    "dead_tiles": 0.7979798018932343,
+    "rho": 1.3796461820602417,
+    "prune": 57.99515247344971
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "tokid",
+    "dead_tiles": 0.47119140625,
+    "rho": 0.08932048082351685,
+    "prune": 1.52740478515625
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "norm",
+    "dead_tiles": 0.19677734375,
+    "rho": 0.08102650940418243,
+    "prune": 0.0
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "freq",
+    "dead_tiles": 0.48095703125,
+    "rho": 0.08933961391448975,
+    "prune": 1.5363693237304688
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "random",
+    "dead_tiles": 0.11962890625,
+    "rho": 0.07795728743076324,
+    "prune": 0.0
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "maxscore",
+    "dead_tiles": 0.6142578125,
+    "rho": 0.09561233222484589,
+    "prune": 0.0
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "everk",
+    "dead_tiles": 0.98291015625,
+    "rho": 0.0902499333024025,
+    "prune": 1.4791488647460938
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "coact",
+    "dead_tiles": 0.98291015625,
+    "rho": 0.09029395878314972,
+    "prune": 1.52740478515625
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "coact+norm",
+    "dead_tiles": 0.98046875,
+    "rho": 0.0933845266699791,
+    "prune": 1.46484375
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "tokid",
+    "dead_tiles": 0.09414756298065186,
+    "rho": 0.1563483625650406,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "norm",
+    "dead_tiles": 0.017811715602874756,
+    "rho": 0.16892704367637634,
+    "prune": 0.25445292703807354
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "freq",
+    "dead_tiles": 0.11195927858352661,
+    "rho": 0.1565600037574768,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "random",
+    "dead_tiles": 0.0,
+    "rho": 0.13545893132686615,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "maxscore",
+    "dead_tiles": 0.6488549709320068,
+    "rho": 0.17031607031822205,
+    "prune": 0.25445292703807354
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "everk",
+    "dead_tiles": 0.9287531822919846,
+    "rho": 0.15930722653865814,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "coact",
+    "dead_tiles": 0.9287531822919846,
+    "rho": 0.15975600481033325,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "coact+norm",
+    "dead_tiles": 0.9185750633478165,
+    "rho": 0.1913643330335617,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "tokid",
+    "dead_tiles": 0.0763358473777771,
+    "rho": 0.01587260328233242,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "norm",
+    "dead_tiles": 0.0788804292678833,
+    "rho": 0.015920862555503845,
+    "prune": 0.5089058540761471
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "freq",
+    "dead_tiles": 0.06361323595046997,
+    "rho": 0.01587687060236931,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "random",
+    "dead_tiles": 0.0,
+    "rho": 0.013910342939198017,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "maxscore",
+    "dead_tiles": 0.11959284543991089,
+    "rho": 0.018596811220049858,
+    "prune": 0.5089058540761471
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "everk",
+    "dead_tiles": 0.9262086525559425,
+    "rho": 0.016278322786092758,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "coact",
+    "dead_tiles": 0.9236641228199005,
+    "rho": 0.016341712325811386,
+    "prune": 0.0
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "coact+norm",
+    "dead_tiles": 0.9160305336117744,
+    "rho": 0.0174755547195673,
+    "prune": 0.0
+  }
+]

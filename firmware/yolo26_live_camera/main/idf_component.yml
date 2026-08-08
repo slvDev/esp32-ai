@@ -1,0 +1,11 @@
+dependencies:
+  espressif/esp32_p4_function_ev_board_noglib:
+    rules:
+    - if: target == esp32p4
+    version: '*'
+  espressif/esp32_s3_eye_noglib:
+    rules:
+    - if: target == esp32s3
+    version: '*'
+  espressif/yolo26:
+    version: '*'

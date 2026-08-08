@@ -1,0 +1,66 @@
+[
+  {
+    "head": "TinyStories",
+    "split": "A -> B",
+    "norm": 64.0196144580841,
+    "composite": 65.28817415237427,
+    "delta": 1.2685596942901611,
+    "jaccard": 0.6497316360473633
+  },
+  {
+    "head": "TinyStories",
+    "split": "B -> A",
+    "norm": 60.40503978729248,
+    "composite": 60.48426032066345,
+    "delta": 0.07922053337097168,
+    "jaccard": 0.6497316360473633
+  },
+  {
+    "head": "Gemma-270M",
+    "split": "A -> B",
+    "norm": 0.0,
+    "composite": 0.0,
+    "delta": 0.0,
+    "jaccard": 0.1082686185836792
+  },
+  {
+    "head": "Gemma-270M",
+    "split": "B -> A",
+    "norm": 0.0,
+    "composite": 0.0,
+    "delta": 0.0,
+    "jaccard": 0.1082686185836792
+  },
+  {
+    "head": "pythia-14m",
+    "split": "A -> B",
+    "norm": 0.25445292703807354,
+    "composite": 0.25445292703807354,
+    "delta": 0.0,
+    "jaccard": 0.24364466965198517
+  },
+  {
+    "head": "pythia-14m",
+    "split": "B -> A",
+    "norm": 0.25445292703807354,
+    "composite": 0.25445292703807354,
+    "delta": 0.0,
+    "jaccard": 0.24364466965198517
+  },
+  {
+    "head": "pythia-70m",
+    "split": "A -> B",
+    "norm": 0.5089058540761471,
+    "composite": 0.5089058540761471,
+    "delta": 0.0,
+    "jaccard": 0.22018349170684814
+  },
+  {
+    "head": "pythia-70m",
+    "split": "B -> A",
+    "norm": 0.5089058540761471,
+    "composite": 0.5089058540761471,
+    "delta": 0.0,
+    "jaccard": 0.22018349170684814
+  }
+]

@@ -1,0 +1,121 @@
+# CONTROL build: matches the Arduino reference (30.82 tok/s) as closely as the
+# two build systems allow. Nothing here is an optimisation -- the point is that
+# the port must reproduce the reference number BEFORE any knob is turned, or the
+# sweep that follows measures the port instead of the knob.
+#
+# The three settings this port exists to change are marked SWEEP below and are
+# left at their Arduino-equivalent values here.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash: 16 MB QIO at 80 MHz, matching the Arduino FQBN. The W25Q128JV supports
+# 133 MHz, but every tensor is staged into PSRAM/SRAM at boot, so flash clock
+# affects boot time only, not tok/s. Measured, not assumed -- not a sweep axis.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# Partition table shared with the Arduino build: model at 0x110000, 15.6 MB.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../esp32_tinystories/partitions.csv"
+
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Octal PSRAM, 8 MB in-package on the ESP32-S3R8.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+# SWEEP AXIS 1: 80M -> 120M. Datasheet: "configurable clock frequency with a
+# maximum of 120 MHz for 8-line SPI SDR/DDR modes". This is the only lever that
+# reaches the output head.
+CONFIG_SPIRAM_SPEED_80M=y
+
+# SWEEP AXIS 2 and 3: Arduino ships 32 KB data cache with 32-byte lines. The S3
+# supports 64 KB and 64-byte lines. Cache SIZE should not help a 1.26 MB
+# no-reuse head scan, but LINE SIZE plausibly does -- longer lines mean fewer,
+# longer PSRAM bursts per miss, and 60.7 MB/s may be a fill-granularity limit
+# rather than a bus limit. That distinction has never been tested on this board.
+CONFIG_ESP32S3_DATA_CACHE_64KB=n
+CONFIG_ESP32S3_DATA_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_32B=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+
+# Console on USB-Serial-JTAG: the board enumerates as 303A:1001 and the Arduino
+# build ran USBMode=hwcdc / CDCOnBoot=cdc, so this is the matching path.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# ESP-IDF defaults stdout to CRLF; Arduino's Serial.write emits raw LF. The
+# generated tokens were identical across both branches all along, but the IDF
+# captures carried seven injected \r bytes, so a byte-level SHA of the output
+# text disagreed between build systems while agreeing within each one.
+#
+# This is worth more than a formatting note. This project's entire correctness
+# argument is "the optimised build emits the same bytes as the reference", and
+# every sweep arm so far was compared only against other arms of the SAME build
+# system -- which is exactly the comparison that hides a console-layer
+# difference. The cross-branch check is the one that matters and it was the one
+# not being made. LF here makes the raw bytes comparable; verify_run.py was also
+# taught to canonicalise, so neither half of the check depends on the other.
+CONFIG_NEWLIB_STDOUT_LINE_ENDING_LF=y
+
+# 1 kHz tick so delay(0) behaves as the sketch expects when feeding the WDT.
+CONFIG_FREERTOS_HZ=1000
+
+# llm_forward holds `int32_t bank[2][LLM_MAX_HEADS*64]` -- 4 KB of stack for the
+# dual-core V-accumulation's two private accumulator banks -- plus the usual
+# frame. Arduino's loop task gets 8192 bytes so it fit silently there; ESP-IDF's
+# app_main defaults to 3584 and it does not. The overflow corrupted FreeRTOS
+# structures and surfaced as a bogus `xQueueSemaphoreTake queue.c:1709`
+# assertion rather than a stack-overflow report, because the canary is only
+# checked on context switch.
+#
+# This is a real latent fragility the port exposed, not an ESP-IDF quirk: the
+# Arduino build is one accumulator bank away from the same failure.
+# RESOLVED in cycle 20, and the 16384 above was treating the symptom.
+# -fstack-usage put llm_forward's frame at 21,312 bytes, so 16 KB was still
+# ~5 KB short and the overflow simply moved: instead of a bogus queue assertion
+# it became a LoadProhibited inside heap_caps_aligned_alloc_base, reached from
+# printf -> _dtoa_r -> _Balloc -> calloc. Comprehensive heap poisoning reported
+# the heap intact throughout, which is consistent: the frame ran off the LOW end
+# of the stack block and smashed an allocator descriptor, not a poisoned
+# payload, so every canary it checked really was fine. Three hypotheses were
+# falsified before the frame was simply measured instead of estimated.
+#
+# The buffers now live in Scratch, sized from the loaded config, and the frame
+# is 832 bytes. 8192 matches the Arduino loop task -- proven adequate on the
+# same code path -- and returns 8 KB of internal SRAM to weight staging.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Run app_main on core 1, because the matvec/attention worker is pinned to core
+# 0 by xTaskCreatePinnedToCore(..., 0) in the sketch.
+#
+# Arduino runs loop() on core 1 (ARDUINO_RUNNING_CORE), so the two were on
+# different cores and genuinely parallel. ESP-IDF defaults app_main to core 0,
+# which put both on the same core: the higher-priority worker preempted on every
+# notify, the split ran serially, and core 0 went ~7 s without reaching idle --
+# tripping the interrupt watchdog.
+#
+# Worth recording rather than just fixing: every dual-core number this project
+# has measured depended on an Arduino scheduling default that appears nowhere in
+# the source. The port is what surfaced it.
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+
+# Watchdogs, for a benchmark that deliberately monopolises both cores.
+#
+# The task WDT is disabled rather than lengthened: the sketch's `delay(0)` every
+# 8 tokens exists to feed *Arduino's* watchdog, and nothing in this build ever
+# calls esp_task_wdt_reset, so an enabled task WDT can only produce a false
+# positive. Recorded rather than silently switched off.
+CONFIG_ESP_TASK_WDT_INIT=n
+
+# The interrupt WDT stays ENABLED -- it catches real interrupt-latency bugs, and
+# this firmware runs hand-written PIE assembly where such a bug is plausible.
+# Raised from the 300 ms default because the decode loop holds both cores in
+# tight vector kernels; 2 s is still three orders of magnitude below the ~6.6 s
+# benchmark, so a genuine lockup is still caught.
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=2000
+
+# Keep the image lean; this is a benchmark artifact, not a product.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y

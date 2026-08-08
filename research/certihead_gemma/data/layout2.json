@@ -1,0 +1,162 @@
+[
+  {
+    "head": "TinyStories",
+    "layout": "norm",
+    "norm_disp": 0.003389175981283188,
+    "inflation": 3.9047226905822754,
+    "dead_tiles": 0.5202020108699799,
+    "rho": 1.6102887392044067,
+    "prune": 62.212324142456055,
+    "corr_norm_best": 0.010155915282666683
+  },
+  {
+    "head": "TinyStories",
+    "layout": "everk",
+    "norm_disp": 0.2251514494419098,
+    "inflation": 10.87428092956543,
+    "dead_tiles": 0.8888888880610466,
+    "rho": 0.5144476890563965,
+    "prune": 21.897901594638824,
+    "corr_norm_best": 0.010155915282666683
+  },
+  {
+    "head": "TinyStories",
+    "layout": "ever+norm",
+    "norm_disp": 0.012066951021552086,
+    "inflation": 3.660524606704712,
+    "dead_tiles": 0.8888888880610466,
+    "rho": 1.6897567510604858,
+    "prune": 63.37295174598694,
+    "corr_norm_best": 0.010155915282666683
+  },
+  {
+    "head": "TinyStories",
+    "layout": "random",
+    "norm_disp": 0.40138161182403564,
+    "inflation": 22.529850006103516,
+    "dead_tiles": 0.0,
+    "rho": 0.17053157091140747,
+    "prune": 0.0,
+    "corr_norm_best": 0.010155915282666683
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "norm",
+    "norm_disp": 3.9575344999320805e-05,
+    "inflation": 43.40922927856445,
+    "dead_tiles": 0.19677734375,
+    "rho": 0.08102650940418243,
+    "prune": 0.0,
+    "corr_norm_best": -0.015394078567624092
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "everk",
+    "norm_disp": 0.02783345989882946,
+    "inflation": 43.18464279174805,
+    "dead_tiles": 0.98291015625,
+    "rho": 0.0902499333024025,
+    "prune": 1.4791488647460938,
+    "corr_norm_best": -0.015394078567624092
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "ever+norm",
+    "norm_disp": 9.350808977615088e-05,
+    "inflation": 43.357696533203125,
+    "dead_tiles": 0.98291015625,
+    "rho": 0.08509210497140884,
+    "prune": 0.0,
+    "corr_norm_best": -0.015394078567624092
+  },
+  {
+    "head": "Gemma-270M",
+    "layout": "random",
+    "norm_disp": 0.02909708209335804,
+    "inflation": 44.38941192626953,
+    "dead_tiles": 0.11962890625,
+    "rho": 0.07795728743076324,
+    "prune": 0.0,
+    "corr_norm_best": -0.015394078567624092
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "norm",
+    "norm_disp": 0.0012421313440427184,
+    "inflation": 15.206960678100586,
+    "dead_tiles": 0.017811715602874756,
+    "rho": 0.16892704367637634,
+    "prune": 0.25445292703807354,
+    "corr_norm_best": -0.34036946296691895
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "everk",
+    "norm_disp": 0.26663604378700256,
+    "inflation": 17.874202728271484,
+    "dead_tiles": 0.9287531822919846,
+    "rho": 0.15930722653865814,
+    "prune": 0.0,
+    "corr_norm_best": -0.34036946296691895
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "ever+norm",
+    "norm_disp": 0.00328439730219543,
+    "inflation": 15.084259033203125,
+    "dead_tiles": 0.9287531822919846,
+    "rho": 0.18672209978103638,
+    "prune": 0.25445292703807354,
+    "corr_norm_best": -0.34036946296691895
+  },
+  {
+    "head": "pythia-14m",
+    "layout": "random",
+    "norm_disp": 0.27923768758773804,
+    "inflation": 18.076826095581055,
+    "dead_tiles": 0.0,
+    "rho": 0.13545893132686615,
+    "prune": 0.0,
+    "corr_norm_best": -0.34036946296691895
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "norm",
+    "norm_disp": 0.0013835385907441378,
+    "inflation": 9.391569137573242,
+    "dead_tiles": 0.0788804292678833,
+    "rho": 0.015920862555503845,
+    "prune": 0.5089058540761471,
+    "corr_norm_best": 0.12687116861343384
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "everk",
+    "norm_disp": 0.04065317660570145,
+    "inflation": 9.704479217529297,
+    "dead_tiles": 0.9262086525559425,
+    "rho": 0.016278322786092758,
+    "prune": 0.0,
+    "corr_norm_best": 0.12687116861343384
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "ever+norm",
+    "norm_disp": 0.0014690031530335546,
+    "inflation": 9.375353813171387,
+    "dead_tiles": 0.9262086525559425,
+    "rho": 0.016868282109498978,
+    "prune": 0.5089058540761471,
+    "corr_norm_best": 0.12687116861343384
+  },
+  {
+    "head": "pythia-70m",
+    "layout": "random",
+    "norm_disp": 0.046292781829833984,
+    "inflation": 9.794315338134766,
+    "dead_tiles": 0.0,
+    "rho": 0.013910342939198017,
+    "prune": 0.0,
+    "corr_norm_best": 0.12687116861343384
+  }
+]

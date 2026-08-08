@@ -1,0 +1,11 @@
+{
+  "model": "C:\\Users\\marsm\\Downloads\\ESP32-Gemma3-270M\\models\\gemma-3-270m-it",
+  "hidden_size": 640,
+  "gen_rows": 1254,
+  "tf_rows": 8192,
+  "gen_prompts": 20,
+  "gen_new_tokens_each": 64,
+  "tf_source": "C:\\Users\\marsm\\Downloads\\ESP32-Gemma3-270M\\models\\gemma-3-270m-it\\README.md",
+  "capture": "forward hook on lm_head input (post final RMSNorm)",
+  "dtype_forward": "float32"
+}

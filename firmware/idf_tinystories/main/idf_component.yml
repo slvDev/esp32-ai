@@ -1,0 +1,14 @@
+## Managed dependencies.
+##
+## esp32-camera is Espressif's own OV3660 driver. Vendoring it would be worse:
+## the DMA/LCD_CAM paths are the part of this bring-up we specifically do NOT
+## want to be novel, because a hand-rolled camera driver would make any
+## coexistence result a statement about our driver rather than about whether the
+## LM and a stock perception pipeline can share the board.
+##
+## Pinned rather than floating: the coexistence matrix is a reproducibility
+## artifact, and a driver that silently changes its DMA buffer sizing would move
+## the free-SRAM numbers without any change on our side.
+dependencies:
+  idf: ">=5.0"
+  espressif/esp32-camera: "~2.0.15"
