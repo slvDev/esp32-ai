@@ -1,0 +1,13 @@
+# Common performance settings; Board Manager supplies the hardware configuration and sdkconfig.defaults.<target> applies target-specific memory tuning.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_FREERTOS_HZ=1000
+
+# The 14,912,348-byte model and the application share a 16 MB flash layout.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_OFFSET=0x10000
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y
+
+# Keep diagnostics visible on the selected board's default console.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

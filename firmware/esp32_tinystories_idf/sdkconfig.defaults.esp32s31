@@ -1,0 +1,2 @@
+# Use the highest PSRAM clock supported by ESP32-S31.
+CONFIG_SPIRAM_SPEED_250M=y
