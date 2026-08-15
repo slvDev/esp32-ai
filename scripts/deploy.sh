@@ -167,10 +167,21 @@ find_esptool() {
 }
 ESPTOOL=$(find_esptool)
 
-# `|| true`: a failing glob would otherwise abort the assignment under `set -e`,
-# before the message below can print.
-PORT=${PORT:-$(ls /dev/cu.usbmodem* 2>/dev/null | head -1 || true)}
-[ -n "$PORT" ] || { echo "no /dev/cu.usbmodem* found; plug the board in, or set PORT=..." >&2; exit 1; }
+# Both OS families name the same hardware differently: macOS calls the Arduino
+# bridge /dev/cu.usbmodem* (and older FTDI/CP210x boards /dev/cu.usbserial-*),
+# while Linux calls the native USB CDC device /dev/ttyACM* and a UART bridge
+# /dev/ttyUSB*. Scan them all so the same command works on either platform.
+# With more than one board attached the first match is arbitrary, so the
+# message tells the user to set PORT to the exact path.
+find_port() {
+  local pat
+  for pat in /dev/ttyACM* /dev/ttyUSB* /dev/cu.usbmodem* /dev/cu.usbserial-*; do
+    ls $pat 2>/dev/null && return 0
+  done
+  return 0
+}
+PORT=${PORT:-$(find_port | head -1)}
+[ -n "$PORT" ] || { echo "no serial port found (looked for /dev/ttyACM*, /dev/ttyUSB*, /dev/cu.usbmodem*); plug the board in, or set PORT=/dev/ttyACM0 (Linux) or PORT=/dev/cu.usbmodemNNNN (macOS)" >&2; exit 1; }
 
 # Every required artifact is checked before anything is generated or built, so a
 # missing file is reported as a list rather than discovered halfway through.
