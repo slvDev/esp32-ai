@@ -351,8 +351,48 @@ class NoBoardNoRun(DeployHarness):
                                    "vocab.json", "layout.json"])
         r = self.run_deploy("barista", PORT="")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("no /dev/cu.usbmodem*", r.stderr)
+        self.assertIn("no serial port found", r.stderr)
         self.assertEqual(self.calls(), [])
+
+
+class SerialPortIsAutoDetected(DeployHarness):
+    """deploy.sh picks a port when PORT is unset. The scan covers both OS
+    families: Linux names the board /dev/ttyACM* or /dev/ttyUSB*, macOS
+    /dev/cu.usbmodem*. These tests stub `ls` so they are independent of the
+    hardware attached to the runner."""
+
+    def setUp(self):
+        super().setUp()
+        self.artifacts("barista", ["model.bin", "tokenizer.json",
+                                   "vocab.json", "layout.json"])
+
+    def run_with_ls(self, ls_body):
+        stub_ls = self.bin / "ls"
+        stub_ls.write_text(ls_body)
+        os.chmod(stub_ls, 0o755)
+        return self.run_deploy("barista", PORT="")
+
+    def test_linux_ttyACM_is_detected(self):
+        r = self.run_with_ls("""#!/bin/sh
+case "$1" in
+  /dev/ttyACM*) echo /dev/ttyACM0; exit 0 ;;
+  *) exit 1 ;;
+esac
+""")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        flash = [c for c in self.calls() if "write_flash" in c]
+        self.assertIn("/dev/ttyACM0", flash[0])
+
+    def test_macos_cu_usbmodem_is_detected(self):
+        r = self.run_with_ls("""#!/bin/sh
+case "$1" in
+  /dev/cu.usbmodem*) echo /dev/cu.usbmodem1410; exit 0 ;;
+  *) exit 1 ;;
+esac
+""")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        flash = [c for c in self.calls() if "write_flash" in c]
+        self.assertIn("/dev/cu.usbmodem1410", flash[0])
 
 
 if __name__ == "__main__":

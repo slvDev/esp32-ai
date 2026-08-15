@@ -77,6 +77,18 @@ scripts/deploy.sh barista        # generate headers, run gates, compile, flash
 the model to be named, because the board holds one at a time and deploying
 replaces it.
 
+Before the first fetch, install the Hugging Face CLI (`hf`), which
+`fetch_model.sh` requires to download the released assets:
+
+```bash
+uv tool install huggingface_hub   # provides `hf`
+```
+
+`deploy.sh` auto-detects the board's serial port on Linux
+(`/dev/ttyACM*` for native USB CDC, `/dev/ttyUSB*` for a UART bridge) and on
+macOS (`/dev/cu.usbmodem*`). If several ports match, or detection does not fit
+your wiring, pin it explicitly: `PORT=/dev/ttyACM0 scripts/deploy.sh barista`.
+
 `fetch_model.sh` checks the inference assets against a SHA-256 and byte size
 pinned in the script, and cross-checks the release's own `metadata.json` against
 those same pins. It installs nothing unless every check passes, so a failed
