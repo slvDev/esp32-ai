@@ -298,7 +298,7 @@ class ToolsRunOutsideTheProjectEnvironment(DeployHarness):
                                    "vocab.json", "layout.json"])
 
     def test_no_uv_call_uses_the_project_environment(self):
-        for model, expected in (("barista", 3), ("tinystories", 1)):
+        for model, expected in (("barista", 3), ("tinystories", 2)):
             with self.subTest(model=model):
                 self.log.unlink(missing_ok=True)
                 self.assertEqual(self.run_deploy(model).returncode, 0)

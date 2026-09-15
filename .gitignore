@@ -24,3 +24,6 @@ videos/
 *.mov
 *.MOV
 *.MP4
+
+# Claude Code plugin memory, personal to this machine
+.claude/

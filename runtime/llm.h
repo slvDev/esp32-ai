@@ -39,9 +39,28 @@ typedef struct {
   /* Optional int8 staging: nibbles unpacked and group scales converted once, so
    * each matvec skips both. Numerics are unchanged - same codes, same scales,
    * same group sums. NULL selects the int4 path. */
-  const int8_t *w8;        // rows*cols, values -7..7
+  const int8_t *w8;        // rows*stride8, values -7..7; padding bytes are 0
   const float  *scale8;    // rows*n_groups, half2float'd once
+  int stride8;             // bytes per staged row: cols rounded up to
+                           // LLM_STAGE_ALIGN, so a SIMD kernel can read whole
+                           // vectors without a tail case
+  /* Optional int4 staging: the packed nibbles copied as they are, with the
+   * group scales converted once. Half the bytes of int8 staging, for a
+   * kernel that unpacks nibbles in registers. NULL unless staged this way. */
+  const uint8_t *w4;       // rows*stride4 packed nibbles, same layout as codes
+  int stride4;             // bytes per staged row, = row_bytes
 } QT;
+
+/* Staged rows are padded to this many bytes. 1 keeps rows contiguous, which
+ * is what the host verifier and the scalar kernel need nothing more than; a
+ * platform with 16-byte vector loads defines 16 before including this file
+ * and allocates staging buffers with matching alignment. */
+#ifndef LLM_STAGE_ALIGN
+#define LLM_STAGE_ALIGN 1
+#endif
+static inline int llm_stage_stride(int cols) {
+  return (cols + LLM_STAGE_ALIGN - 1) / LLM_STAGE_ALIGN * LLM_STAGE_ALIGN;
+}
 
 // IEEE half -> float.
 static inline float half2float(uint16_t h) {
@@ -62,7 +81,10 @@ static inline float half2float(uint16_t h) {
   float out; memcpy(&out, &f, 4); return out;
 }
 
-typedef struct {
+struct Scratch;
+typedef struct Model Model;
+
+struct Model {
   Cfg c;
   QT tok_emb;             // [V, D]  input embedding
   QT out_head;            // [Vout, D]; first Vout rows of tok_emb when tied
@@ -86,7 +108,12 @@ typedef struct {
   // tied 32,768-row head and a 66-row FFN matrix have different cost profiles.
   void (*head_matvec)(const QT *, const float *, float *);
   void (*layer_matvec)(const QT *, const float *, float *);
-} Model;
+  /* Attention for one layer at one position over all heads, on the quantized
+   * KV path only. NULL runs the heads in sequence on the calling core; a
+   * platform can split them across cores with llm_attend_heads and the
+   * second scratch set (q8b, w16b, scoresb). */
+  void (*attn_heads)(Model *, struct Scratch *, int layer, int pos);
+};
 
 // Advance a cursor over the file, binding one quant tensor. Reads the per-tensor
 // group prefix, then ragged codes + fp16 scales.
@@ -98,6 +125,8 @@ static const uint8_t *bind_q(const uint8_t *p, QT *t, int rows, int cols) {
   t->codes = p;  p += (size_t)rows * t->row_bytes;
   t->scales = (const uint16_t *)p;  p += (size_t)rows * t->n_groups * 2;
   t->w8 = NULL; t->scale8 = NULL;   // int4 path until staged
+  t->stride8 = 0;
+  t->w4 = NULL; t->stride4 = 0;
   return p;
 }
 static const uint8_t *bind_f(const uint8_t *p, const float **t, int n) {
@@ -216,6 +245,46 @@ static inline int32_t llm_dot_i8(const int8_t *a, const int8_t *b, int n) {
   return acc;
 }
 
+/* ---- vector dot primitives --------------------------------------------------
+ * Dot products over whole 16-byte vectors: nvec*16 int8 pairs, or nvec*8 int16
+ * pairs, exact integer sums. These scalar versions are the reference; a
+ * platform with a vector unit defines LLM_DOT_S8V / LLM_DOT_S16V to its own
+ * before including this file. The int16 sum needs more than 32 bits. */
+static inline int32_t llm_dot_s8v_scalar(const int8_t *a, const int8_t *b, int nvec) {
+  int32_t acc = 0;
+  for (int i = 0; i < nvec * 16; i++) acc += (int32_t)a[i] * (int32_t)b[i];
+  return acc;
+}
+static inline int64_t llm_dot_s16v_scalar(const int16_t *a, const int16_t *b, int nvec) {
+  int64_t acc = 0;
+  for (int i = 0; i < nvec * 8; i++) acc += (int64_t)a[i] * (int64_t)b[i];
+  return acc;
+}
+#ifndef LLM_DOT_S8V
+#define LLM_DOT_S8V llm_dot_s8v_scalar
+#endif
+#ifndef LLM_DOT_S16V
+#define LLM_DOT_S16V llm_dot_s16v_scalar
+#endif
+
+/* ---- quantized KV cache ------------------------------------------------------
+ * Optional attention path, selected by LLM_KV_QUANT. Keys are int8 with one
+ * scale per position and head, each head padded to LLM_KPAD bytes so a key is
+ * whole vectors. Values are int16 with one scale per position and head, stored
+ * TRANSPOSED: per layer, head and feature, one row over positions. Both
+ * attention passes then become the same integer dot products as the matvec:
+ *   score_t = q8 . k8_t              (one dot per position)
+ *   out_i   = v16t_i . w16           (one dot per feature over positions)
+ * The softmax weight of each position is multiplied by that position's value
+ * scale before it is quantized to int16, which is what lets the value scale
+ * vary per position while the dot product still sees a single scale.
+ * Bytes read per token drop about 3x against the fp32 cache and the MACs move
+ * to the vector unit. Quality is measured on the host with ppl.c, since the
+ * arithmetic here is exactly what the device runs. */
+#ifdef LLM_KV_QUANT
+#define LLM_KPAD 32     /* bytes per head in the key cache; head_dim <= 32 */
+#endif
+
 /* Same arithmetic as matvec_q8_range, reading pre-unpacked int8 weights.
  *
  * Keep out of line on ESP32-S3: with Arduino ESP32 3.3.10 at -O3, inlining
@@ -225,9 +294,9 @@ __attribute__((noinline))
 #endif
 static void matvec_i8_range(const QT *t, const int8_t *xq, float x_scale,
                             float *y, int row_begin, int row_end) {
-  int g = t->group, ng = t->n_groups, cols = t->cols;
+  int g = t->group, ng = t->n_groups, cols = t->cols, stride = t->stride8;
   for (int r = row_begin; r < row_end; r++) {
-    const int8_t *w = t->w8 + (size_t)r * cols;
+    const int8_t *w = t->w8 + (size_t)r * stride;
     const float *sc = t->scale8 + (size_t)r * ng;
     float acc = 0.f;
     for (int gi = 0; gi < ng; gi++) {
@@ -306,6 +375,9 @@ static int llm_load(const uint8_t *base, Model *m) {
       m->c.n_heads <= 0 || m->c.dim % m->c.n_heads != 0 ||
       (m->c.dim / m->c.n_heads) % 2 != 0)
     return -2;
+#ifdef LLM_KV_QUANT
+  if (m->c.dim / m->c.n_heads > LLM_KPAD) return -2;
+#endif
   /* A tied head is a view of the first out_vocab embedding rows, so it cannot
    * be longer than the embedding. */
   if ((flags & LLM_FLAG_TIED_HEAD) && m->out_vocab > m->c.vocab) return -2;
@@ -319,6 +391,7 @@ static int llm_load(const uint8_t *base, Model *m) {
 
   m->head_matvec = NULL;
   m->layer_matvec = NULL;
+  m->attn_heads = NULL;
   int D = m->c.dim, L = m->c.n_layers, P = m->c.ple_dim, F = m->c.ffn, V = m->c.vocab;
 
   p = bind_q(p, &m->tok_emb, V, D);
@@ -358,7 +431,7 @@ static int llm_load(const uint8_t *base, Model *m) {
 /* Byte offset of the float scale array in a staged buffer. rows*cols need not
  * be a multiple of 4, so the offset is rounded up to keep the float* aligned. */
 static inline size_t llm_stage_scale_offset(const QT *t) {
-  size_t w_bytes = (size_t)t->rows * t->cols * sizeof(int8_t);
+  size_t w_bytes = (size_t)t->rows * llm_stage_stride(t->cols) * sizeof(int8_t);
   return (w_bytes + sizeof(float) - 1) & ~(size_t)(sizeof(float) - 1);
 }
 
@@ -370,19 +443,60 @@ static inline size_t llm_stage_int8_bytes(const QT *t) {
 static inline void llm_stage_int8(QT *t, void *buffer) {
   int8_t *w = (int8_t *)buffer;
   float *sc = (float *)((uint8_t *)buffer + llm_stage_scale_offset(t));
+  int stride = llm_stage_stride(t->cols);
   for (int r = 0; r < t->rows; r++) {
     const uint8_t *row = t->codes + (size_t)r * t->row_bytes;
-    int8_t *dst = w + (size_t)r * t->cols;
+    int8_t *dst = w + (size_t)r * stride;
     for (int j = 0; j < t->cols; j++) {
       uint8_t byte = row[j >> 1];
       int code = (j & 1) ? (byte >> 4) : (byte & 0xF);
       dst[j] = (int8_t)(code - 8);
     }
+    for (int j = t->cols; j < stride; j++) dst[j] = 0;
     for (int gi = 0; gi < t->n_groups; gi++)
       sc[(size_t)r * t->n_groups + gi] =
           half2float(t->scales[(size_t)r * t->n_groups + gi]);
   }
   t->w8 = w;
+  t->scale8 = sc;
+  t->stride8 = stride;
+}
+
+/* ---- int4 staging -----------------------------------------------------
+ * A straight copy of the packed codes out of flash into faster memory, plus
+ * float scales. The bytes are the same nibbles matvec_q8_range reads, so that
+ * function stays the scalar reference for any kernel using this staging. */
+static inline size_t llm_stage_int4_bytes(const QT *t) {
+  size_t w_bytes = (size_t)t->rows * t->row_bytes;
+  return ((w_bytes + sizeof(float) - 1) & ~(size_t)(sizeof(float) - 1))
+       + (size_t)t->rows * t->n_groups * sizeof(float);
+}
+/* The scales alone, so they can be placed apart from the codes (they are
+ * read once per row, and are small enough for fast memory). */
+static inline size_t llm_stage_int4_scale_bytes(const QT *t) {
+  return (size_t)t->rows * t->n_groups * sizeof(float);
+}
+static inline void llm_stage_int4_split(QT *t, void *codes_buf, void *scales_buf) {
+  size_t w_bytes = (size_t)t->rows * t->row_bytes;
+  uint8_t *w = (uint8_t *)codes_buf;
+  float *sc = (float *)scales_buf;
+  memcpy(w, t->codes, w_bytes);
+  for (size_t i = 0; i < (size_t)t->rows * t->n_groups; i++)
+    sc[i] = half2float(t->scales[i]);
+  t->w4 = w;
+  t->stride4 = t->row_bytes;
+  t->scale8 = sc;
+}
+static inline void llm_stage_int4(QT *t, void *buffer) {
+  size_t w_bytes = (size_t)t->rows * t->row_bytes;
+  uint8_t *w = (uint8_t *)buffer;
+  float *sc = (float *)((uint8_t *)buffer
+                        + ((w_bytes + sizeof(float) - 1) & ~(size_t)(sizeof(float) - 1)));
+  memcpy(w, t->codes, w_bytes);
+  for (size_t i = 0; i < (size_t)t->rows * t->n_groups; i++)
+    sc[i] = half2float(t->scales[i]);
+  t->w4 = w;
+  t->stride4 = t->row_bytes;
   t->scale8 = sc;
 }
 
@@ -415,10 +529,21 @@ static inline int llm_core_stage_count(const Model *m) {
 }
 
 // Scratch buffers, caller-allocated (host: malloc; device: PSRAM).
-typedef struct {
+typedef struct Scratch {
   float *x, *h, *qkv, *att, *g1, *g2, *ple, *tmpP, *trow, *logits;
   float *scores; // [seq_len], reused by each attention head
-  float *kcache, *vcache; // [L * seq_len * D]
+  float *kcache, *vcache; // [L * seq_len * D]; unused under LLM_KV_QUANT
+#ifdef LLM_KV_QUANT
+  int8_t  *k8;    // [L][S][H][LLM_KPAD] int8 keys, zero padded
+  float   *ks;    // [L][S][H] key scales
+  int16_t *v16t;  // [L][H][Dh][S] int16 values, one row per feature
+  float   *vs;    // [L][S][H] value scales
+  int8_t  *q8;    // [LLM_KPAD] this head's query, 16-byte aligned
+  int16_t *w16;   // [S] this head's softmax weights, 16-byte aligned
+  int8_t  *q8b;   // second set of the three, for a second core
+  int16_t *w16b;
+  float   *scoresb; // [S]
+#endif
 #ifdef LLM_PROFILE
   struct {
     uint64_t input_us, attn_us, ffn_us, ple_us, head_us;
@@ -430,6 +555,104 @@ typedef struct {
 #ifdef LLM_PROFILE
 static void llm_profile_reset(Scratch *s) {
   memset(&s->profile, 0, sizeof(s->profile));
+}
+#endif
+
+#ifdef LLM_KV_QUANT
+/* The quantized cache is three placements, because they are read at very
+ * different rates and a device can afford fast memory for the small ones:
+ *   key   the int8 keys, one 32-byte row per position and head: read for
+ *         every position at every step, the hottest part of the cache;
+ *   hot   the per-head temporaries (two sets, for two cores);
+ *   main  the transposed int16 values and both scale arrays.
+ * llm_kv_quant_bind takes a buffer for each; a NULL key or hot buffer is
+ * carved out of main instead, in which case main must be sized with
+ * llm_kv_quant_bytes (the sum of all three). Sizes include alignment slack. */
+static inline size_t llm_kv_key_bytes(const Model *m) {
+  return (size_t)m->c.n_layers * m->c.seq_len * m->c.n_heads * LLM_KPAD + 16;
+}
+static inline size_t llm_kv_hot_bytes(const Model *m) {
+  size_t S = m->c.seq_len;
+  return 2 * (LLM_KPAD + S * sizeof(int16_t)) + S * sizeof(float) + 48;
+}
+static inline size_t llm_kv_main_bytes(const Model *m) {
+  size_t L = m->c.n_layers, S = m->c.seq_len, H = m->c.n_heads, Dh = m->c.dim / m->c.n_heads;
+  return L * H * Dh * S * sizeof(int16_t) + 2 * L * S * H * sizeof(float) + 16;
+}
+static inline size_t llm_kv_quant_bytes(const Model *m) {
+  return llm_kv_main_bytes(m) + llm_kv_key_bytes(m) + llm_kv_hot_bytes(m);
+}
+static inline uint8_t *llm_align16(void *p) {
+  return (uint8_t *)(((uintptr_t)p + 15) & ~(uintptr_t)15);
+}
+static inline void llm_kv_quant_bind(const Model *m, Scratch *s, void *main_buf,
+                                     void *key_buf, void *hot_buf) {
+  size_t L = m->c.n_layers, S = m->c.seq_len, H = m->c.n_heads, Dh = m->c.dim / m->c.n_heads;
+  uint8_t *p = llm_align16(main_buf);
+  s->v16t = (int16_t *)p; p += L * H * Dh * S * sizeof(int16_t); /* S*2-byte rows */
+  s->ks = (float *)p;     p += L * S * H * sizeof(float);
+  s->vs = (float *)p;     p += L * S * H * sizeof(float);
+  uint8_t *k = llm_align16(key_buf ? key_buf : p);
+  s->k8 = (int8_t *)k;    k += L * S * H * LLM_KPAD;              /* 32-byte rows */
+  if (!key_buf) p = k;
+  uint8_t *h = llm_align16(hot_buf ? hot_buf : p);
+  s->q8 = (int8_t *)h;    h += LLM_KPAD;
+  s->w16 = (int16_t *)h;  h += S * sizeof(int16_t);
+  h = llm_align16(h);
+  s->q8b = (int8_t *)h;   h += LLM_KPAD;
+  s->w16b = (int16_t *)h; h += S * sizeof(int16_t);
+  s->scoresb = (float *)h;
+}
+
+/* Attention over heads h0..h1-1 of one layer at one position, on the
+ * quantized cache, with the caller's temporaries. Reads k8/v16t written for
+ * every position up to pos, writes only this range's slice of s->att, so two
+ * ranges can run at once on two cores with separate temporaries. */
+static void llm_attend_heads(Model *m, Scratch *s, int l, int pos, int h0, int h1,
+                             int8_t *q8, int16_t *w16, float *scores) {
+  int D = m->c.dim, H = m->c.n_heads, Dh = D / H, S = m->c.seq_len;
+  float scale = 1.f / sqrtf((float)Dh);
+  int nk = LLM_KPAD / 16, n16 = (pos + 1 + 7) / 8;
+  const float *q = s->qkv;
+  for (int hh = h0; hh < h1; hh++) {
+    const float *qh = q + hh * Dh;
+    float *ao = s->att + hh * Dh;
+    float qmax = 1e-8f;
+    for (int i = 0; i < Dh; i++) { float a = fabsf(qh[i]); if (a > qmax) qmax = a; }
+    float qinv = 127.f / qmax;
+    for (int i = 0; i < Dh; i++) {
+      int v8 = (int)lrintf(qh[i] * qinv);
+      q8[i] = (int8_t)(v8 > 127 ? 127 : (v8 < -127 ? -127 : v8));
+    }
+    for (int i = Dh; i < LLM_KPAD; i++) q8[i] = 0;
+    float qs = qmax / 127.f * scale;
+    const int8_t *kb = s->k8 + ((size_t)l * S * H + hh) * LLM_KPAD;
+    const float *ksb = s->ks + (size_t)l * S * H + hh;
+    const float *vsb = s->vs + (size_t)l * S * H + hh;
+    float maxs = -1e30f;
+    for (int t = 0; t <= pos; t++) {
+      float dot = (float)LLM_DOT_S8V(q8, kb + (size_t)t * H * LLM_KPAD, nk)
+                  * qs * ksb[(size_t)t * H];
+      scores[t] = dot;
+      if (dot > maxs) maxs = dot;
+    }
+    // softmax weights, each multiplied by its position's value scale, to int16
+    float denom = 0.f, wmax = 0.f;
+    for (int t = 0; t <= pos; t++) {
+      float w = expf(scores[t] - maxs);
+      denom += w;
+      float wv = w * vsb[(size_t)t * H];
+      scores[t] = wv;
+      if (wv > wmax) wmax = wv;
+    }
+    float winv = 32767.f / wmax;
+    for (int t = 0; t <= pos; t++) w16[t] = (int16_t)lrintf(scores[t] * winv);
+    for (int t = pos + 1; t < n16 * 8; t++) w16[t] = 0;
+    float os = wmax / 32767.f / denom;
+    const int16_t *vt = s->v16t + ((size_t)l * H + hh) * Dh * S;
+    for (int i = 0; i < Dh; i++)
+      ao[i] = (float)LLM_DOT_S16V(vt + (size_t)i * S, w16, n16) * os;
+  }
 }
 #endif
 
@@ -489,6 +712,36 @@ static void llm_forward(Model *m, int token, int pos, Scratch *s) {
         kh[i] = k1 * c - k2 * sn; kh[i + Dh / 2] = k2 * c + k1 * sn;
       }
     }
+#ifdef LLM_KV_QUANT
+    // ---- quantized cache: store this position's k (int8) and v (int16)
+    for (int hh = 0; hh < H; hh++) {
+      const float *kh = k + hh * Dh, *vh = v + hh * Dh;
+      float kmax = 1e-8f, vmax = 1e-8f;
+      for (int i = 0; i < Dh; i++) {
+        float a = fabsf(kh[i]); if (a > kmax) kmax = a;
+        a = fabsf(vh[i]);       if (a > vmax) vmax = a;
+      }
+      size_t slot = ((size_t)l * S + pos) * H + hh;
+      int8_t *kd = s->k8 + slot * LLM_KPAD;
+      float kinv = 127.f / kmax;
+      for (int i = 0; i < Dh; i++) {
+        int q8 = (int)lrintf(kh[i] * kinv);
+        kd[i] = (int8_t)(q8 > 127 ? 127 : (q8 < -127 ? -127 : q8));
+      }
+      for (int i = Dh; i < LLM_KPAD; i++) kd[i] = 0;
+      s->ks[slot] = kmax / 127.f;
+      int16_t *vt = s->v16t + ((size_t)l * H + hh) * Dh * S;
+      float vinv = 32767.f / vmax;
+      for (int i = 0; i < Dh; i++) {
+        int q16 = (int)lrintf(vh[i] * vinv);
+        vt[(size_t)i * S + pos] = (int16_t)(q16 > 32767 ? 32767 : (q16 < -32767 ? -32767 : q16));
+      }
+      s->vs[slot] = vmax / 32767.f;
+    }
+    // ---- causal attention over 0..pos, both passes as vector dots
+    if (m->attn_heads) m->attn_heads(m, s, l, pos);
+    else llm_attend_heads(m, s, l, pos, 0, H, s->q8, s->w16, s->scores);
+#else
     float *kc = s->kcache + (size_t)l * S * D, *vc = s->vcache + (size_t)l * S * D;
     memcpy(kc + (size_t)pos * D, k, D * sizeof(float));
     memcpy(vc + (size_t)pos * D, v, D * sizeof(float));
@@ -515,6 +768,7 @@ static void llm_forward(Model *m, int token, int pos, Scratch *s) {
       }
       for (int i = 0; i < Dh; i++) ao[i] /= denom;
     }
+#endif
     LLM_LMV(m, &m->attn_proj[l], s->att, s->h);
     for (int i = 0; i < D; i++) s->x[i] += s->h[i];
 #ifdef LLM_PROFILE

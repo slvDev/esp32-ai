@@ -106,6 +106,12 @@ prepare_headers() {
       SHOW=wrote step 0 "generate vocab.h" \
         uv run --no-project --with 'tokenizers==0.23.1' python "$SKETCH/tools/generate_vocab.py" \
         --tokenizer "$TOKENIZER" --out "$SKETCH/generated/vocab.h"
+      # The sketch takes a typed prompt, so it needs the encoder as well as the
+      # decode table.
+      echo "=== generate encoder asset from $TOKENIZER ==="
+      SHOW=wrote step 0 "generate encoder asset" \
+        uv run --no-project python "$SKETCH/tools/generate_tokenizer_header.py" \
+        --tokenizer "$TOKENIZER" --out "$SKETCH/generated/tokenizer_encoder.h"
       ;;
     barista)
       echo "=== generate word tables from $VOCAB and $LAYOUT ==="
@@ -141,7 +147,25 @@ extra_gates() {
 # --- everything below is shared ---------------------------------------------
 PART_OFFSET=0x110000
 
-FQBN='esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=custom,PSRAM=opi,DebugLevel=info'
+# CDC_ON_BOOT selects where Serial goes: cdc for the chip's native USB port
+# (the default), default for UART0 when the cable is in the board's UART port.
+CDC_ON_BOOT=${CDC_ON_BOOT:-cdc}
+# CHIP selects the target: esp32s3 (the N16R8 the project was built for) or
+# esp32p4 (ESP32-P4NRW32, 32 MB flash and PSRAM; Serial defaults to UART0 there
+# because its dev boards expose a UART bridge, so pass CDC_ON_BOOT=default).
+CHIP=${CHIP:-esp32s3}
+case "$CHIP" in
+  esp32s3)
+    FQBN="esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=$CDC_ON_BOOT,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=custom,PSRAM=opi,DebugLevel=info"
+    ;;
+  esp32p4)
+    FQBN="esp32:esp32:esp32p4:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=$CDC_ON_BOOT,UploadMode=default,FlashMode=qio,FlashFreq=80,FlashSize=32M,PartitionScheme=custom,PSRAM=enabled,DebugLevel=info"
+    ;;
+  *)
+    echo "CHIP must be esp32s3 or esp32p4, got '$CHIP'" >&2
+    exit 2
+    ;;
+esac
 
 # -O3, overriding the Arduino core default of -Os. The runtime carries no
 # per-function optimization attributes; this flag is the whole configuration.
@@ -238,6 +262,7 @@ BYTES=$(wc -c < "$MODEL" | tr -d ' ')
 echo
 echo "=== about to flash, replacing the model now on the board ==="
 printf "  model   : %s\n" "$MODEL_KIND"
+printf "  chip    : %s\n" "$CHIP"
 printf "  sketch  : %s\n" "$SKETCH"
 printf "  binary  : %s\n" "$MODEL"
 printf "  port    : %s\n" "$PORT"
@@ -247,7 +272,7 @@ echo
 
 echo "=== flash model -> $PORT @ $PART_OFFSET ==="
 step 2 "flash model" \
-  "$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
+  "$ESPTOOL" --chip "$CHIP" --port "$PORT" --baud 921600 \
   write_flash "$PART_OFFSET" "$MODEL"
 
 # --input-dir: `upload` does not rebuild, so point it at the build just made.

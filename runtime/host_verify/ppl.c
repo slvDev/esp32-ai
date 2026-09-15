@@ -38,6 +38,9 @@ int main(int argc, char **argv) {
   s.ple = malloc(L*P*4); s.tmpP = malloc(L*P*4); s.trow = malloc(L*P*4);
   s.logits = malloc(V*4); s.scores = malloc(S*4);
   s.kcache = malloc((size_t)L*S*D*4); s.vcache = malloc((size_t)L*S*D*4);
+#ifdef LLM_KV_QUANT
+  llm_kv_quant_bind(&m, &s, malloc(llm_kv_quant_bytes(&m)), NULL, NULL);
+#endif
 
   size_t vn; uint16_t *val = (uint16_t *)read_file(valp, &vn);
   size_t n_tok = vn / 2;
@@ -64,6 +67,9 @@ int main(int argc, char **argv) {
   const char *mode = "int8-activations";
 #else
   const char *mode = "fp32-activations";
+#endif
+#ifdef LLM_KV_QUANT
+  mode = "int8-act + quant-KV";
 #endif
   printf("%-18s  val CE %.4f  ppl %.2f   (%ld predictions)\n",
          mode, mean, exp(mean), count);

@@ -5,6 +5,72 @@
   <a href="https://www.linkedin.com/in/slvdev/">LinkedIn</a>
 </p>
 
+> **This fork adds an ESP32-P4 port.** The same model file and the same C runtime
+> run 6x faster on an ESP32-P4 by using its vector unit, and the TinyStories
+> firmware now takes a prompt typed over serial. The original ESP32-S3 project
+> by [slvDev](https://github.com/slvDev/esp32-ai) is documented unchanged below;
+> the port is offered upstream in
+> [issue #23](https://github.com/slvDev/esp32-ai/issues/23).
+
+## ESP32-P4 results
+
+Board: Waveshare ESP32-P4-WIFI6 (ESP32-P4NRW32: two RISC-V cores at 360 MHz,
+32 MB in-package PSRAM, 32 MB flash). Same `model.bin` as the S3, same
+partition layout, quality unchanged. Numbers are for a 200-token story with a
+typed prompt; the profile is milliseconds per token.
+
+| step                                             | tok/s | ms/token | head | attention |
+| ------------------------------------------------ | ----: | -------: | ---: | --------: |
+| ESP32-S3 N16R8, the original                     |  10.5 |     93.3 | 58.6 |      17.7 |
+| ESP32-P4, code unchanged                         |  17.0 |     57.2 | 38.3 |      10.2 |
+| + int8 matvec on the PIE vector unit             |  39.6 |     23.8 | 12.6 |       8.0 |
+| + attention on a quantized KV cache, vector dots |  43.0 |     21.8 | 12.6 |       6.0 |
+| + output head kept int4, nibbles unpacked in registers |  54 |   17.2 |  8.3 |       5.7 |
+| + attention heads split across both cores        |  57.5 |     16.0 |  8.3 |       4.5 |
+| + L1 cache preload of the head rows              | **63** | **14.6** |  7.1 |       4.4 |
+
+What the P4 build does differently, all in `runtime/llm_pie_dot.h`,
+`runtime/llm_pie.h` and the TinyStories sketch:
+
+- **Vector matvec.** `esp.vmulas.s8.xacc` multiplies 16 int8 pairs per
+  instruction into a 40-bit accumulator. Staged rows are padded to 16 bytes
+  (`LLM_STAGE_ALIGN`) so every load is a whole vector.
+- **Quantized KV cache.** Keys are int8, values int16 stored transposed, so both
+  attention passes are the same integer dot products. Host perplexity over
+  32,768 validation predictions: 2.1012 nats with the fp32 cache, 2.1014 with
+  the quantized one.
+- **int4 head.** The output head stays packed in PSRAM and is unpacked with an
+  AND and a 4-bit lane shift; the codes are used as 0..15 and `8 * sum(x)` is
+  subtracted, which makes the result identical to the int8 kernel. The head is
+  bound by PSRAM bandwidth, so half the bytes is the win.
+- **Both cores.** The head and the large per-layer matvecs were already split;
+  attention heads now are too.
+- **Cache preload.** The L1 data cache's preload engine fetches the next 8 KB
+  of head rows while the current block computes.
+
+Every vector kernel is checked against the scalar reference at boot and must
+match bit for bit; the board refuses to run otherwise.
+
+### Running it on a P4
+
+```bash
+scripts/fetch_model.sh tinystories
+CHIP=esp32p4 scripts/deploy.sh tinystories
+```
+
+If your board's USB connector is a UART bridge rather than the chip's native
+USB (the Waveshare board is; it enumerates as "USB Single Serial"), add
+`CDC_ON_BOOT=default` so `Serial` goes to UART0. Then open a serial monitor at
+115200, wait for `READY>`, type a prompt and press return. Each story is
+sampled, so every run differs; ASCII prompts only.
+
+The 360 MHz is this chip revision's ceiling: the clock driver refuses 400 MHz
+on revision v1.3 silicon.
+
+Port by Barkın Sarıkartal. The design and the model are slvDev's; see the
+credits at the end of this file.
+
+
 ![28.9M-parameter LLM running on an ESP32-S3](media/esp32-ple-demo.gif)
 
 This is a 28.9 million parameter language model that generates text on an ESP32-S3

@@ -116,8 +116,14 @@ def read_tokenizer(path):
     return path.read_bytes()
 
 
-def check_encoding_contract(config):
-    """Reject any configuration the device encoder does not implement."""
+def check_encoding_contract(config, allow_special_added_tokens=False):
+    """Reject any configuration the device encoder does not implement.
+
+    allow_special_added_tokens accepts added tokens marked special, such as
+    TinyStories' <|endoftext|>. The device never needs to encode one: a
+    special token is emitted by the model, not typed by a user, and its literal
+    text typed at the prompt is encoded as ordinary bytes instead.
+    """
     model = config.get("model") or {}
     if model.get("type") != "BPE":
         raise SystemExit(
@@ -129,9 +135,12 @@ def check_encoding_contract(config):
             raise SystemExit(
                 f"{field} is configured; the device encoder applies none"
             )
-    if config.get("added_tokens"):
+    added = config.get("added_tokens") or []
+    if allow_special_added_tokens:
+        added = [t for t in added if not t.get("special")]
+    if added:
         raise SystemExit(
-            f"{len(config['added_tokens'])} added tokens are configured; the "
+            f"{len(added)} added tokens are configured; the "
             f"asset carries no table for them"
         )
 
@@ -204,10 +213,10 @@ def merge_pairs(merges):
     return pairs
 
 
-def build_asset(source):
+def build_asset(source, allow_special_added_tokens=False):
     """Pack the BTK1 asset from the raw bytes of tokenizer.json."""
     config = json.loads(source)
-    check_encoding_contract(config)
+    check_encoding_contract(config, allow_special_added_tokens)
 
     vocab = config["model"]["vocab"]
     merges = config["model"]["merges"]
@@ -299,7 +308,8 @@ def render(asset):
     return "\n".join(lines) + "\n"
 
 
-def generate(tokenizer_path, out_path, asset_path=None):
+def generate(tokenizer_path, out_path, asset_path=None,
+             allow_special_added_tokens=False):
     """Validate the tokenizer and write the header. Returns the path.
 
     asset_path additionally writes the raw BTK1 bytes, which is what the host
@@ -307,7 +317,8 @@ def generate(tokenizer_path, out_path, asset_path=None):
     recompiled against a header for every tokenizer.
     """
     source = read_tokenizer(tokenizer_path)
-    asset, active_vocab, merge_count, merge_base = build_asset(source)
+    asset, active_vocab, merge_count, merge_base = build_asset(
+        source, allow_special_added_tokens)
 
     out_path = Path(out_path)
     # Generated headers are ignored, so the directory is absent in a fresh clone.
@@ -333,8 +344,10 @@ def main():
     ap.add_argument("--out", default=DEFAULT_OUT, help="header to write")
     ap.add_argument("--asset", default=None,
                     help="also write the raw BTK1 bytes here, for host checks")
+    ap.add_argument("--allow-special-added-tokens", action="store_true",
+                    help="accept added tokens marked special, e.g. <|endoftext|>")
     args = ap.parse_args()
-    generate(args.tokenizer, args.out, args.asset)
+    generate(args.tokenizer, args.out, args.asset, args.allow_special_added_tokens)
 
 
 if __name__ == "__main__":
